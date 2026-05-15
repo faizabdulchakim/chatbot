@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Management - RAG Chatbot</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 10px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h2 { color: #4a90d9; margin-bottom: 20px; font-size: 18px; }
+        
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; color: #555; font-weight: bold; }
+        input, textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+        textarea { height: 150px; resize: vertical; }
+        input:focus, textarea:focus { outline: none; border-color: #4a90d9; }
+        
+        /* File upload styles */
+        .file-upload-box {
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+        .file-upload-box.dragover {
+            border-color: #4a90d9;
+            background: #f0f7ff;
+        }
+        .file-upload-box input[type="file"] {
+            display: none;
+        }
+        .file-upload-label {
+            cursor: pointer;
+            color: #666;
+        }
+        .file-upload-label:hover {
+            color: #4a90d9;
+        }
+        .file-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        .file-info {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #888;
+        }
+        .file-name {
+            font-weight: bold;
+            color: #4a90d9;
+            margin-top: 5px;
+        }
+        
+        button { padding: 12px 24px; background: #4a90d9; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        button:hover { background: #3a7bc8; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button.delete { background: #e74c3c; padding: 6px 12px; font-size: 12px; }
+        button.delete:hover { background: #c0392b; }
+        
+        .divider {
+            border-top: 1px solid #eee;
+            margin: 20px 0;
+            position: relative;
+        }
+        .divider-text {
+            position: absolute;
+            top: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            padding: 0 10px;
+            color: #888;
+            font-size: 12px;
+        }
+        
+        .doc-list { list-style: none; }
+        .doc-item { background: #f9f9f9; border: 1px solid #eee; border-radius: 5px; padding: 15px; margin-bottom: 10px; }
+        .doc-item:hover { background: #f0f0f0; }
+        .doc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .doc-id { font-weight: bold; color: #4a90d9; }
+        .doc-meta { font-size: 12px; color: #888; margin-bottom: 8px; }
+        .doc-content { color: #333; line-height: 1.5; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+        .doc-actions { margin-top: 10px; text-align: right; }
+        
+        .stats { background: #4a90d9; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .stats-number { font-size: 24px; font-weight: bold; }
+        
+        .message { padding: 10px; border-radius: 5px; margin-bottom: 15px; }
+        .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .message.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        
+        .loading { text-align: center; padding: 40px; color: #666; }
+        .empty { text-align: center; padding: 40px; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 Document Management</h1>
+        <p class="subtitle">Add, view, and delete documents from RAG knowledge base</p>
+        
+        <div class="stats">
+            <div>Total Documents: <span class="stats-number" id="docCount">0</span></div>
+        </div>
+        
+        <div class="grid">
+            <!-- Add Document Form -->
+            <div class="card">
+                <h2>➕ Add New Document</h2>
+                <div id="addMessage"></div>
+                <form id="addForm">
+                    <div class="form-group">
+                        <label for="docId">Document ID *</label>
+                        <input type="text" id="docId" placeholder="e.g., khodam-001" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="docContent">Content *</label>
+                        <textarea id="docContent" placeholder="Enter document content here..." required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="docSource">Source</label>
+                        <input type="text" id="docSource" placeholder="e.g., spreadsheet, manual, file">
+                    </div>
+                    <button type="submit" id="addBtn">Add Document</button>
+                </form>
+                
+                <div class="divider">
+                    <span class="divider-text">OR UPLOAD FILE</span>
+                </div>
+                
+                <form id="uploadForm">
+                    <div class="file-upload-box" id="dropZone">
+                        <div class="file-icon">📁</div>
+                        <label for="fileInput" class="file-upload-label">
+                            <strong>Click to upload</strong> or drag & drop
+                        </label>
+                        <div class="file-info">Supports: TXT, MD, JSON, CSV, XLSX, XLS (Max 10MB)</div>
+                        <input type="file" id="fileInput" accept=".txt,.md,.json,.csv,.js,.py,.xlsx,.xls">
+                        <div class="file-name" id="fileName"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="uploadDocId">Document ID (optional)</label>
+                        <input type="text" id="uploadDocId" placeholder="Auto-generated if empty">
+                    </div>
+                    <div class="form-group">
+                        <label for="uploadSource">Source</label>
+                        <input type="text" id="uploadSource" value="file-upload" placeholder="e.g., file-upload">
+                    </div>
+                    <button type="submit" id="uploadBtn">📤 Upload File</button>
+                </form>
+            </div>
+            
+            <!-- Document List -->
+            <div class="card">
+                <h2>📚 Existing Documents</h2>
+                <div id="listMessage"></div>
+                <div id="docListContainer">
+                    <div class="loading">Loading documents...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        
+        // Load documents on page load
+        loadDocuments();
+        
+        // File upload - drag & drop
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                fileName.textContent = files[0].name;
+            }
+        });
+        
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                fileName.textContent = fileInput.files[0].name;
+            }
+        });
+        
+        // File upload form
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const btn = document.getElementById('uploadBtn');
+            const msgDiv = document.getElementById('addMessage');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                msgDiv.innerHTML = `<div class="message error">❌ Please select a file</div>`;
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.textContent = 'Uploading...';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('docId', document.getElementById('uploadDocId').value || `file-${Date.now()}`);
+            formData.append('source', document.getElementById('uploadSource').value || 'file-upload');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    msgDiv.innerHTML = `<div class="message success">✅ File uploaded successfully! Document ID: ${result.document.id}</div>`;
+                    fileInput.value = '';
+                    fileName.textContent = '';
+                    document.getElementById('uploadDocId').value = '';
+                    loadDocuments();
+                } else {
+                    msgDiv.innerHTML = `<div class="message error">❌ Error: ${result.error || 'Failed to upload file'}</div>`;
+                }
+            } catch (error) {
+                msgDiv.innerHTML = `<div class="message error">❌ Error: ${error.message}</div>`;
+            }
+            
+            btn.disabled = false;
+            btn.textContent = '📤 Upload File';
+            
+            setTimeout(() => msgDiv.innerHTML = '', 5000);
+        });
+        
+        // Add document form
+        document.getElementById('addForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const btn = document.getElementById('addBtn');
+            const msgDiv = document.getElementById('addMessage');
+            
+            btn.disabled = true;
+            btn.textContent = 'Adding...';
+            
+            const doc = {
+                id: document.getElementById('docId').value,
+                content: document.getElementById('docContent').value,
+                source: document.getElementById('docSource').value || 'manual'
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/documents`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(doc)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    msgDiv.innerHTML = `<div class="message success">✅ Document added successfully!</div>`;
+                    document.getElementById('addForm').reset();
+                    loadDocuments();
+                } else {
+                    msgDiv.innerHTML = `<div class="message error">❌ Error: ${result.error || 'Failed to add document'}</div>`;
+                }
+            } catch (error) {
+                msgDiv.innerHTML = `<div class="message error">❌ Error: ${error.message}</div>`;
+            }
+            
+            btn.disabled = false;
+            btn.textContent = 'Add Document';
+            
+            setTimeout(() => msgDiv.innerHTML = '', 5000);
+        });
+        
+        // Load and display documents
+        async function loadDocuments() {
+            const container = document.getElementById('docListContainer');
+            const countEl = document.getElementById('docCount');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/documents`);
+                const docs = await response.json();
+                
+                countEl.textContent = docs.length;
+                
+                if (docs.length === 0) {
+                    container.innerHTML = `<div class="empty">No documents yet. Add your first document!</div>`;
+                    return;
+                }
+                
+                let html = '<ul class="doc-list">';
+                for (const doc of docs) {
+                    html += `
+                        <li class="doc-item">
+                            <div class="doc-header">
+                                <span class="doc-id">📄 ${escapeHtml(doc.id)}</span>
+                                <span class="doc-meta">${doc.source || 'unknown'}</span>
+                            </div>
+                            <div class="doc-meta">Created: ${doc.created_at || 'N/A'}</div>
+                            <div class="doc-content">${escapeHtml(doc.content)}</div>
+                            <div class="doc-actions">
+                                <button class="delete" onclick="deleteDocument('${escapeHtml(doc.id)}')">🗑️ Delete</button>
+                            </div>
+                        </li>
+                    `;
+                }
+                html += '</ul>';
+                container.innerHTML = html;
+            } catch (error) {
+                container.innerHTML = `<div class="empty">❌ Error loading documents: ${error.message}</div>`;
+            }
+        }
+        
+        // Delete document
+        async function deleteDocument(id) {
+            if (!confirm(`Are you sure you want to delete document "${id}"?`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/documents/${id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    loadDocuments();
+                } else {
+                    alert('Failed to delete document');
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

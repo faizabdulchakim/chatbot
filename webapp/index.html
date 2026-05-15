@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot - RAG with Ollama</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 10px; text-align: center; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 20px; font-size: 14px; }
+        .chat-box { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .messages { height: 450px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 15px; }
+        .message { margin-bottom: 15px; padding: 12px 16px; border-radius: 10px; max-width: 85%; }
+        .message.user { background: #4a90d9; color: white; margin-left: auto; }
+        .message.assistant { background: #e8e8e8; color: #333; }
+        .message .sources { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 12px; color: #666; }
+        .message .rag-badge { display: inline-block; background: #6c5ce7; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-bottom: 8px; }
+        .input-area { display: flex; gap: 10px; margin-bottom: 10px; }
+        #messageInput { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+        #sendBtn { padding: 12px 24px; background: #4a90d9; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        #sendBtn:hover { background: #3a7bc8; }
+        #sendBtn:disabled { background: #ccc; cursor: not-allowed; }
+        .options { display: flex; gap: 15px; align-items: center; margin-bottom: 10px; }
+        .options label { font-size: 14px; color: #666; }
+        .status { text-align: center; font-size: 12px; color: #666; }
+        .typing { font-style: italic; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Chatbot - RAG with Ollama</h1>
+        <p class="subtitle">Powered by ChromaDB + Sentence Transformers + Llama3</p>
+        <div class="chat-box">
+            <div class="options">
+                <label>
+                    <input type="checkbox" id="ragToggle" checked> Use RAG (search documents)
+                </label>
+            </div>
+            <div class="messages" id="messages">
+                <div class="message assistant">
+                    <span class="rag-badge">RAG v0.2</span><br>
+                    Hello! I'm your RAG-powered chatbot. I can search your documents and answer based on them using Ollama (Llama3). Upload documents via API, then ask me anything!
+                </div>
+            </div>
+            <div class="input-area">
+                <input type="text" id="messageInput" placeholder="Type your message..." onkeypress="if(event.key==='Enter')sendMessage()">
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+            </div>
+            <div class="status" id="status">Connected to Chatbot API v0.2.0 | RAG Enabled</div>
+        </div>
+    </div>
+
+    <script>
+        let conversationId = null;
+        const API_URL = 'http://182.165.0.199:8001';
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const messagesDiv = document.getElementById('messages');
+            const ragToggle = document.getElementById('ragToggle');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message
+            messagesDiv.innerHTML += `<div class="message user">${escapeHtml(message)}</div>`;
+            input.value = '';
+            sendBtn.disabled = true;
+            
+            // Show typing indicator
+            const typingId = 'typing-' + Date.now();
+            messagesDiv.innerHTML += `<div class="message assistant typing" id="${typingId}">Thinking...</div>`;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            
+            try {
+                const response = await fetch(`${API_URL}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message, 
+                        conversation_id: conversationId,
+                        use_rag: ragToggle.checked
+                    })
+                });
+                
+                const data = await response.json();
+                
+                // Remove typing indicator
+                document.getElementById(typingId).remove();
+                
+                // Build response HTML
+                let responseHtml = '';
+                if (data.rag_used) {
+                    responseHtml += `<span class="rag-badge">RAG Used</span><br>`;
+                }
+                responseHtml += escapeHtml(data.response);
+                
+                if (data.sources && data.sources.length > 0) {
+                    responseHtml += `<div class="sources"><strong>Sources:</strong><br>${data.sources.map(s => `• ${escapeHtml(s)}`).join('<br>')}</div>`;
+                }
+                
+                // Add assistant response
+                messagesDiv.innerHTML += `<div class="message assistant">${responseHtml}</div>`;
+                conversationId = data.conversation_id;
+            } catch (error) {
+                document.getElementById(typingId).remove();
+                messagesDiv.innerHTML += `<div class="message assistant" style="background:#ffcccc;">Error: ${error.message}</div>`;
+            }
+            
+            sendBtn.disabled = false;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

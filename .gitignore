@@ -1,0 +1,25 @@
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.env
+venv/
+env/
+
+# ChromaDB data (opsional, hapus baris ini jika ingin ikut commit)
+api/chroma_db/
+
+# Upload temp files
+admin/uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
