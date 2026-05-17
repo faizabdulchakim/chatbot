@@ -32,11 +32,14 @@ collection = chroma_client.get_or_create_collection(name="documents")
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Ollama config
-OLLAMA_MODEL = "llama3"
-OLLAMA_HOST = "http://182.165.0.199:11434"
+#OLLAMA_MODEL = "phi4:latest"
+#OLLAMA_HOST = "http://localhost:11434"
 
-# Set Ollama host globally
-ollama.host = OLLAMA_HOST
+OLLAMA_MODEL = "qwen3.6:latest"
+OLLAMA_HOST = "http://192.168.199.38:11434"
+
+# Ollama client with custom host
+ollama_client = ollama.Client(host=OLLAMA_HOST)
 
 # In-memory conversations
 conversations = []
@@ -164,7 +167,7 @@ Answer:"""
     
     try:
         # Call Ollama
-        response = ollama.generate(
+        response = ollama_client.generate(
             model=OLLAMA_MODEL,
             prompt=prompt
         )
@@ -198,7 +201,7 @@ def get_conversation(conv_id: str):
 def list_models():
     """List available Ollama models"""
     try:
-        models = ollama.list(host=OLLAMA_HOST)
+        models = ollama_client.list()
         return {"models": models}
     except Exception as e:
         return {"error": str(e), "ollama_host": OLLAMA_HOST}
