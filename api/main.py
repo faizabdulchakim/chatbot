@@ -40,8 +40,8 @@ embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 #OLLAMA_MODEL = "phi4:latest"
 #OLLAMA_HOST = "http://localhost:11434"
 
-OLLAMA_MODEL = "qwen3.6:latest"
-OLLAMA_HOST = "http://192.168.199.38:11434"
+OLLAMA_MODEL = "qwen2.5:7b-instruct"
+OLLAMA_HOST = "http://192.168.199.40:11434"
 
 # RAG config
 SIMILARITY_THRESHOLD = 1.5  # Max distance for document relevance (L2 distance; lower = more similar)
@@ -79,7 +79,6 @@ def chunk_text(content: str, chunk_word_size: int = CHUNK_WORD_SIZE, chunk_word_
 class Document(BaseModel):
     id: Optional[str] = None
     content: str
-    source: Optional[str] = None
     metadata: Optional[dict] = None
     created_at: Optional[str] = None
 
@@ -91,7 +90,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
-    sources: Optional[List[str]] = None
     rag_used: bool = False
 
 @app.get("/")
@@ -126,7 +124,6 @@ def add_document(doc: Document):
         ids.append(chunk_id)
         documents.append(chunk)
         metadatas.append({
-            "source": doc.source or "unknown",
             "created_at": doc.created_at,
             "parent_doc_id": doc_id,
             "chunk_index": idx + 1,
@@ -156,7 +153,6 @@ def list_documents():
         docs.append(Document(
             id=doc_id,
             content=results["documents"][i],
-            source=results["metadatas"][i].get("source", "unknown"),
             created_at=results["metadatas"][i].get("created_at", ""),
             metadata=results["metadatas"][i]
         ))
@@ -167,6 +163,18 @@ def delete_document(doc_id: str):
     """Delete document from knowledge base"""
     collection.delete(ids=[doc_id])
     return {"status": "deleted", "id": doc_id}
+
+@app.delete("/documents")
+def delete_all_documents():
+    """Delete all documents/chunks from knowledge base."""
+    try:
+        results = collection.get()
+        all_ids = results.get("ids", [])
+        if all_ids:
+            collection.delete(ids=all_ids)
+        return {"status": "deleted_all", "deleted_count": len(all_ids)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete all documents: {str(e)}")
 
 def search_similar(query: str, n_results: int = 3, distance_threshold: float = 1.0):
     """Search for similar documents with threshold filtering
@@ -323,7 +331,6 @@ def chat(request: ChatRequest):
     conversation_id = request.conversation_id or f"conv_{datetime.now().timestamp()}"
     
     response_text = ""
-    sources = []
     rag_used = False
     
     if request.use_rag:
@@ -366,9 +373,6 @@ def chat(request: ChatRequest):
                 context_parts = []
                 max_chunk_display = 1200  # Limit context per chunk for clarity and token efficiency
                 for i, doc in enumerate(relevant_docs):
-                    doc_preview = truncate_at_sentence(doc, 200)
-                    sources.append(f"Source {i+1}: {doc_preview}")
-                    
                     doc_truncated = truncate_at_sentence(doc, max_chunk_display)
                     context_parts.append(f"[Chunk {i+1}]: {doc_truncated}")
                 
@@ -419,7 +423,6 @@ Answer:"""
     return ChatResponse(
         response=response_text,
         conversation_id=conversation_id,
-        sources=sources if sources else None,
         rag_used=rag_used
     )
 
