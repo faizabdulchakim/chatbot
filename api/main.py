@@ -6,15 +6,21 @@ import uvicorn
 import os
 import logging
 import re
+import json
 from datetime import datetime
 import chromadb
 from sentence_transformers import SentenceTransformer
 import ollama
+import paho.mqtt.publish as mqtt_publish
+from dotenv import load_dotenv
 
 app = FastAPI(title="Chatbot API", description="RAG Chatbot with Ollama", version="0.2.0")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(ENV_PATH)
 
 # CORS for frontend access
 app.add_middleware(
@@ -40,8 +46,8 @@ embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 #OLLAMA_MODEL = "phi4:latest"
 #OLLAMA_HOST = "http://localhost:11434"
 
-OLLAMA_MODEL = "qwen2.5:7b-instruct"
-OLLAMA_HOST = "http://192.168.199.40:11434"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://192.168.199.40:11434")
 
 # RAG config
 SIMILARITY_THRESHOLD = 1.5  # Max distance for document relevance (L2 distance; lower = more similar)
@@ -53,8 +59,34 @@ CHUNK_WORD_OVERLAP = 25     # Overlap to preserve context across chunks
 # Ollama client with custom host
 ollama_client = ollama.Client(host=OLLAMA_HOST)
 
+# MQTT config
+MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+
 # In-memory conversations
 conversations = []
+
+def mqtt_send(topic: str, value: str) -> bool:
+    """Publish MQTT message to broker. Returns True if publish succeeds."""
+    try:
+        auth = None
+        if MQTT_USERNAME:
+            auth = {"username": MQTT_USERNAME, "password": MQTT_PASSWORD or ""}
+        mqtt_publish.single(
+            topic=topic,
+            payload=str(value),
+            hostname=MQTT_HOST,
+            port=MQTT_PORT,
+            auth=auth,
+            retain=True,
+        )
+        logger.info("MQTT published topic=%s value=%s", topic, value)
+        return True
+    except Exception as e:
+        logger.error("MQTT publish error: %s", e)
+        return False
 
 def chunk_text(content: str, chunk_word_size: int = CHUNK_WORD_SIZE, chunk_word_overlap: int = CHUNK_WORD_OVERLAP) -> List[str]:
     """Split long text into overlapping word chunks for better retrieval."""
@@ -87,10 +119,16 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     use_rag: bool = True
 
+class MqttAction(BaseModel):
+    topic: str
+    value: str
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
     rag_used: bool = False
+    action: Optional[MqttAction] = None
+    action_sent: bool = False
 
 @app.get("/")
 def root():
@@ -332,6 +370,8 @@ def chat(request: ChatRequest):
     
     response_text = ""
     rag_used = False
+    mqtt_action = None
+    action_sent = False
     
     if request.use_rag:
         # Search for relevant documents
@@ -365,7 +405,7 @@ def chat(request: ChatRequest):
 
             if not is_context_relevant(request.message, relevant_docs):
                 logger.info("Retrieved docs exist but are out-of-context for the question")
-                response_text = "No information provided"
+                response_text = "No information provided 1"
                 rag_used = False
             else:
                 rag_used = True
@@ -378,10 +418,38 @@ def chat(request: ChatRequest):
                 
                 context = "\n\n".join(context_parts)
                 logger.info("Context built for RAG: %s", context)
-                
-                # Build strict grounded prompt
-                prompt = f"""You must answer using ONLY the provided context.
-If the answer is not explicitly present in the context, output exactly: No information provided
+
+                # Device-control mode if control instructions exist in retrieved context.
+                is_control_doc = bool(
+                    re.search(
+                        r"mqtt_topic|mqtt[_/]|set_level|set_hex|mod_lighting|mod_audio",
+                        context,
+                        re.IGNORECASE,
+                    )
+                )
+
+                if is_control_doc:
+                    prompt = f"""You are a device control assistant.
+Use ONLY the provided context.
+
+Return ONLY valid JSON (no markdown, no extra text) with this exact schema:
+{{"response":"<natural reply>","action":{{"topic":"<mqtt_topic>","value":"<mqtt_value>"}}}}
+
+Rules:
+- If context contains no matching instruction for user situation, return:
+  {{"response":"No information provided 2","action":null}}
+- If reply is possible but no MQTT action needed, return action as null.
+
+Context:
+{context}
+
+User message: {request.message}
+
+JSON:"""
+                else:
+                    # Build strict grounded prompt
+                    prompt = f"""You must answer using ONLY the provided context.
+If the answer is not explicitly present in the context, output exactly: No information provided 3
 Do not infer, do not add external facts, and do not continue after that sentence.
 
 Context:
@@ -397,18 +465,41 @@ Answer:"""
                         model=OLLAMA_MODEL,
                         prompt=prompt
                     )
-                    response_text = response.get("response", "No response from Ollama")
+                    raw_response = response.get("response", "No response from Ollama")
+
+                    if is_control_doc:
+                        # Be resilient if model wraps JSON in markdown fences.
+                        clean_response = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw_response.strip())
+                        try:
+                            parsed = json.loads(clean_response)
+                            response_text = parsed.get("response", "No information provided 4")
+                            action_data = parsed.get("action")
+                            if (
+                                isinstance(action_data, dict)
+                                and action_data.get("topic")
+                                and action_data.get("value") is not None
+                            ):
+                                mqtt_action = MqttAction(
+                                    topic=str(action_data.get("topic")),
+                                    value=str(action_data.get("value")),
+                                )
+                                action_sent = mqtt_send(mqtt_action.topic, mqtt_action.value)
+                        except json.JSONDecodeError:
+                            logger.warning("Control-mode response is not valid JSON: %s", raw_response)
+                            response_text = raw_response
+                    else:
+                        response_text = raw_response
                 except Exception as e:
                     response_text = f"[Ollama Error] {str(e)}. Make sure Ollama is running on {OLLAMA_HOST}"
         else:
             # No relevant documents found, skip Ollama call
             logger.info("No documents matched similarity threshold, returning no information")
-            response_text = "No information provided"
+            response_text = "No information provided 5"
             rag_used = False
     else:
         # RAG disabled, skip Ollama call
         logger.info("RAG disabled, returning no information")
-        response_text = "No information provided"
+        response_text = "No information provided 6"
         rag_used = False
     
     # Save conversation
@@ -423,7 +514,9 @@ Answer:"""
     return ChatResponse(
         response=response_text,
         conversation_id=conversation_id,
-        rag_used=rag_used
+        rag_used=rag_used,
+        action=mqtt_action,
+        action_sent=action_sent,
     )
 
 @app.get("/conversations/{conv_id}")

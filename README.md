@@ -127,6 +127,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+
+run on venv
+cd api
+source venv/Scripts/activate
+uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
 API will be available at: `http://localhost:8001`
 
 ---
@@ -135,3 +141,8 @@ API will be available at: `http://localhost:8001`
 - This is the FOUNDATION project
 - Video Chatbot and Smart Robot will extend this
 - All AI projects will reuse this RAG pipeline
+
+
+
+hapus chroma db
+rm -rf C:/Users/user/Documents/prj_2026/chatbot/api/chroma_db
